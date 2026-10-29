@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <path d="M44 0H212Q256 0 256 44V212Q256 256 212 256H44Q0 256 0 212V44Q0 0 44 0Z" fill="#142b49"/>
+  <path d="M50 38H206Q218 38 218 50V78Q218 90 206 90H50Q38 90 38 78V50Q38 38 50 38Z" fill="#ecf3fc"/>
+  <path d="M50 102H206Q218 102 218 114V142Q218 154 206 154H50Q38 154 38 142V114Q38 102 50 102Z" fill="#ecf3fc"/>
+  <path d="M50 166H206Q218 166 218 178V206Q218 218 206 218H50Q38 218 38 206V178Q38 166 50 166Z" fill="#ecf3fc"/>
+  <circle cx="62" cy="64" r="7" fill="#13b981"/>
+  <circle cx="62" cy="128" r="7" fill="#13b981"/>
+  <circle cx="62" cy="192" r="7" fill="#13b981"/>
+  <rect x="84" y="56" width="78" height="6" rx="3" fill="#345878"/>
+  <rect x="84" y="68" width="54" height="5" rx="2.5" fill="#a5bbcf"/>
+  <rect x="84" y="120" width="78" height="6" rx="3" fill="#345878"/>
+  <rect x="84" y="132" width="54" height="5" rx="2.5" fill="#a5bbcf"/>
+  <rect x="84" y="184" width="78" height="6" rx="3" fill="#345878"/>
+  <rect x="84" y="196" width="54" height="5" rx="2.5" fill="#a5bbcf"/>
+  <circle cx="194" cy="64" r="5" fill="#345878"/>
+  <circle cx="194" cy="128" r="5" fill="#345878"/>
+  <circle cx="194" cy="192" r="5" fill="#345878"/>
+</svg>
