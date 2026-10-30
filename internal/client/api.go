@@ -149,9 +149,9 @@ func (a *API) Plan(ctx context.Context, packages []string) (model.Job, error) {
 	err := a.request(ctx, "POST", "/plans", model.PlanRequest{Packages: packages}, &j)
 	return j, err
 }
-func (a *API) Install(ctx context.Context, id string) (model.Job, error) {
+func (a *API) Install(ctx context.Context, id string, confirmRemovals bool) (model.Job, error) {
 	var j model.Job
-	err := a.request(ctx, "POST", "/install", model.InstallRequest{PlanID: id}, &j)
+	err := a.request(ctx, "POST", "/install", model.InstallRequest{PlanID: id, ConfirmRemovals: confirmRemovals}, &j)
 	return j, err
 }
 func (a *API) Reboot(ctx context.Context, hostname string) (model.Job, error) {

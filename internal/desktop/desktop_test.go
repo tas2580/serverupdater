@@ -32,11 +32,13 @@ func (noRemote) Job(ctx context.Context, _ string) (model.Job, error) {
 	<-ctx.Done()
 	return model.Job{}, ctx.Err()
 }
-func (noRemote) Check(context.Context) (model.Job, error)           { panic("unerwarteter Start") }
-func (noRemote) Plan(context.Context, []string) (model.Job, error)  { panic("unerwarteter Start") }
-func (noRemote) Install(context.Context, string) (model.Job, error) { panic("unerwarteter Start") }
-func (noRemote) Reboot(context.Context, string) (model.Job, error)  { panic("unerwarteter Neustart") }
-func (noRemote) Close()                                             {}
+func (noRemote) Check(context.Context) (model.Job, error)          { panic("unerwarteter Start") }
+func (noRemote) Plan(context.Context, []string) (model.Job, error) { panic("unerwarteter Start") }
+func (noRemote) Install(context.Context, string, bool) (model.Job, error) {
+	panic("unerwarteter Start")
+}
+func (noRemote) Reboot(context.Context, string) (model.Job, error) { panic("unerwarteter Neustart") }
+func (noRemote) Close()                                            {}
 
 func newDesktop(t *testing.T) *Desktop {
 	t.Helper()
@@ -130,6 +132,63 @@ func TestPackageSelectionAndExpiredPreview(t *testing.T) {
 	if !d.previewButton.Disabled() {
 		t.Fatal("abgelaufene Vorschau bestätigt")
 	}
+}
+
+func TestRemovalConfirmationCheckboxIsRequired(t *testing.T) {
+	d := newDesktop(t)
+	d.applySnapshot(snapshot())
+	d.confirmPlan(model.Plan{ID: "replacement", ExpiresAt: time.Now().Add(time.Minute), Actions: []model.Action{{Package: "jellyfin-ffmpeg7:amd64", From: "7", Remove: true}, {Package: "jellyfin-ffmpeg8:amd64", To: "8"}}})
+	button := dialogButton(t, d, "Jetzt installieren")
+	if !button.Disabled() {
+		t.Fatal("Entfernung ohne zusätzliche Zustimmung möglich")
+	}
+	test.Tap(button) // noRemote.Install would panic if this submitted an installation.
+	pop := d.Window.Canvas().Overlays().Top().(*widget.PopUp)
+	content := pop.Content.(*fyne.Container).Objects[2].(*fyne.Container)
+	var ack *widget.Check
+	for _, obj := range content.Objects {
+		if check, ok := obj.(*widget.Check); ok {
+			ack = check
+		}
+	}
+	if ack == nil {
+		t.Fatal("Entfernungsbestätigung fehlt")
+	}
+	if output := os.Getenv("SERVERUPDATER_REMOVAL_SCREENSHOT"); output != "" {
+		f, err := os.Create(output)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = png.Encode(f, d.Window.Canvas().Capture()); err != nil {
+			f.Close()
+			t.Fatal(err)
+		}
+		if err = f.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	test.Tap(ack)
+	if button.Disabled() {
+		t.Fatal("bestätigte Entfernung bleibt deaktiviert")
+	}
+	test.Tap(ack)
+	if !button.Disabled() {
+		t.Fatal("widerrufene Zustimmung wird ignoriert")
+	}
+	test.Tap(dialogButton(t, d, "Abbrechen"))
+	if d.submitting {
+		t.Fatal("Abbruch startet Installation")
+	}
+}
+
+func TestOrdinaryPreviewNeedsNoRemovalCheckbox(t *testing.T) {
+	d := newDesktop(t)
+	d.applySnapshot(snapshot())
+	d.confirmPlan(model.Plan{ID: "ordinary", ExpiresAt: time.Now().Add(time.Minute), Actions: []model.Action{{Package: "tzdata:all", From: "1", To: "2"}}})
+	if dialogButton(t, d, "Jetzt installieren").Disabled() {
+		t.Fatal("normales Update unnötig gesperrt")
+	}
+	test.Tap(dialogButton(t, d, "Abbrechen"))
 }
 
 func TestRebootDetectionAndDashboardPreview(t *testing.T) {

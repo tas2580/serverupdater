@@ -24,7 +24,7 @@ type Remote interface {
 	Job(context.Context, string) (model.Job, error)
 	Check(context.Context) (model.Job, error)
 	Plan(context.Context, []string) (model.Job, error)
-	Install(context.Context, string) (model.Job, error)
+	Install(context.Context, string, bool) (model.Job, error)
 	Reboot(context.Context, string) (model.Job, error)
 	Close()
 }
@@ -569,25 +569,64 @@ func (d *Desktop) confirmPlan(p model.Plan) {
 		return
 	}
 	gen := d.generation
-	lines := []string{"Server: " + d.profile.Name + " (" + d.status.Hostname + ")", "", "Diese vollständige Liste enthält auch benötigte Abhängigkeiten:", ""}
+	lines := []string{"Server: " + d.profile.Name + " (" + d.status.Hostname + ")", "", "Aktualisieren / neu installieren (einschließlich Abhängigkeiten):", ""}
+	removals := []string{}
 	for _, a := range p.Actions {
+		if a.Remove {
+			removals = append(removals, fmt.Sprintf("%s (installiert: %s)", a.Package, a.From))
+			continue
+		}
 		from := a.From
 		if from == "" {
 			from = "NEU"
 		}
 		lines = append(lines, fmt.Sprintf("%s: %s → %s", a.Package, from, a.To))
 	}
-	lines = append(lines, "", "Bestehende Paketkonfigurationen bleiben erhalten.", "Dienste können während des Updates neu starten.", "Der Server wird nicht automatisch neu gestartet.", "Gültig bis "+p.ExpiresAt.Local().Format("15:04:05"))
 	text := widget.NewLabel(strings.Join(lines, "\n"))
 	text.Wrapping = fyne.TextWrapWord
-	scroll := container.NewVScroll(text)
+	sections := container.NewVBox(text)
+	if len(removals) > 0 {
+		heading := widget.NewLabelWithStyle(fmt.Sprintf("WIRD ENTFERNT: %d Paket(e)", len(removals)), fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
+		heading.Importance = widget.DangerImportance
+		list := widget.NewLabel(strings.Join(removals, "\n"))
+		list.Wrapping = fyne.TextWrapWord
+		list.Selectable = true
+		sections.Add(heading)
+		sections.Add(list)
+	}
+	footer := widget.NewLabel("Bestehende Paketkonfigurationen bleiben erhalten.\nDienste können während des Updates neu starten.\nDer Server wird nicht automatisch neu gestartet.\nGültig bis " + p.ExpiresAt.Local().Format("15:04:05"))
+	footer.Wrapping = fyne.TextWrapWord
+	sections.Add(footer)
+	scroll := container.NewVScroll(sections)
 	scroll.SetMinSize(fyne.NewSize(760, 380))
-	confirmation := dialog.NewCustomConfirm("Updates installieren?", "Jetzt installieren", "Abbrechen", scroll, func(ok bool) {
-		if !ok || gen != d.generation {
+	ack := widget.NewCheck("Ich bestätige die oben aufgeführten Paketentfernungen.", nil)
+	var content fyne.CanvasObject = scroll
+	if len(removals) > 0 {
+		content = container.NewBorder(nil, ack, nil, nil, scroll)
+	}
+	confirmation := dialog.NewCustom("Updates installieren?", "Abbrechen", content, d.Window)
+	install := widget.NewButtonWithIcon("Jetzt installieren", theme.ConfirmIcon(), func() {
+		if gen != d.generation || (len(removals) > 0 && !ack.Checked) {
 			return
 		}
-		d.submit(func(ctx context.Context, r Remote) (model.Job, error) { return r.Install(ctx, p.ID) }, false)
-	}, d.Window)
+		confirmation.Hide()
+		d.submit(func(ctx context.Context, r Remote) (model.Job, error) {
+			return r.Install(ctx, p.ID, len(removals) > 0 && ack.Checked)
+		}, false)
+	})
+	install.Importance = widget.HighImportance
+	if len(removals) > 0 {
+		install.Disable()
+		ack.OnChanged = func(checked bool) {
+			if checked {
+				install.Enable()
+			} else {
+				install.Disable()
+			}
+		}
+	}
+	cancel := widget.NewButtonWithIcon("Abbrechen", theme.CancelIcon(), confirmation.Hide)
+	confirmation.SetButtons([]fyne.CanvasObject{cancel, install})
 	confirmation.Show()
 }
 func (d *Desktop) confirmReboot() {

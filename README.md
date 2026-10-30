@@ -10,11 +10,12 @@ Der Client verbindet sich mit der festen IP des Servers über HTTPS. Auf dem Cli
 - Automatische Paketprüfung beim Dienststart und standardmäßig jede Stunde, auch bei geschlossenem Client.
 - Paketliste mit Suche, alten/neuen Versionen, Einzelauswahl und Kennzeichnung zurückgehaltener Pakete.
 - Vor jeder Installation eine bestätigungspflichtige Vorschau einschließlich zusätzlicher Abhängigkeiten.
+- Erforderliche Paketentfernungen, etwa `jellyfin-ffmpeg7` beim Wechsel auf `jellyfin-ffmpeg8`, werden separat angezeigt und benötigen eine zusätzliche Bestätigungs-Checkbox. Essenzielle, geschützte und zurückgehaltene Pakete können darüber nicht entfernt werden.
 - Serverseitige Hintergrundaufträge mit Status und Protokoll; Installationen laufen bei geschlossener oder unterbrochener Clientverbindung weiter.
 - **Separater Button „Server neu starten“: jederzeit unabhängig von Updates, mit Bestätigung des Servernamens.** Während eigener Paketoperationen ist der Neustart gesperrt; vor der Beauftragung werden außerdem externe APT-/dpkg-Sperren geprüft. Der Client verbindet sich anschließend erneut.
 - Zertifikatsprüfung über einen fest hinterlegten SHA-256-Fingerabdruck und zufälliges Zugangstoken.
 
-Zielplattformen: Debian 12/13 (amd64/arm64) für den Server, Windows/Linux amd64 für den Client. Der Server wird statisch ohne CGo gebaut. Der Client verwendet Fyne und benötigt auf Linux eine grafische Sitzung mit OpenGL/X11 beziehungsweise XWayland.
+Zielplattformen: Debian 12/13 (amd64, arm64 und armhf/ARMv7) für den Server, Windows/Linux amd64 für den Client. Der Server wird statisch ohne CGo gebaut. Der Client verwendet Fyne und benötigt auf Linux eine grafische Sitzung mit OpenGL/X11 beziehungsweise XWayland.
 
 ## Schnellstart mit fertigen Dateien
 
@@ -23,14 +24,24 @@ Lizenzhinweise zu mitgelieferten Bibliotheken stehen in `THIRD_PARTY_NOTICES.txt
 
 ### 1. Server installieren
 
-Das passende Serverarchiv auf den Debian-Server kopieren und dort entpacken. Auf üblichen Intel-/AMD-Servern:
+Das universelle Archiv `serverupdater-server-linux.tar.gz` enthält alle drei unterstützten Serverarchitekturen. Der Installer wählt die passende Datei automatisch. Alternativ mit `dpkg --print-architecture` die Serverarchitektur ermitteln und das kleinere passende Archiv auf den Debian-Server kopieren:
+
+| Debian-Architektur | Serverarchiv |
+| --- | --- |
+| `amd64` | `serverupdater-server-linux-amd64.tar.gz` |
+| `arm64` (64-Bit-ARM) | `serverupdater-server-linux-arm64.tar.gz` |
+| `armhf` (32-Bit-ARM, mindestens ARMv7) | `serverupdater-server-linux-armhf.tar.gz` |
+
+Mit dem universellen Archiv:
 
 ```sh
-tar -xzf serverupdater-server-linux-amd64.tar.gz
-sudo sh scripts/install-server.sh bin/serverupdaterd-linux-amd64
+tar -xzf serverupdater-server-linux.tar.gz
+sudo sh scripts/install-server.sh
 ```
 
-Auf ARM64 stattdessen das arm64-Archiv und `bin/serverupdaterd-linux-arm64` verwenden. `dpkg --print-architecture` zeigt die Serverarchitektur an.
+Der Installer wählt die passende Datei aus `bin/` automatisch. Alternativ lässt sich ihr Pfad als Argument angeben. Die tatsächliche ELF-Architektur wird vor dem Anhalten oder Überschreiben eines Dienstes geprüft; eine falsche Datei wird auch dann abgelehnt, wenn sie umbenannt wurde. Mit `sh scripts/install-server.sh --check` lässt sich diese Prüfung ohne Installation und ohne Root-Rechte ausführen.
+
+`Exec format error` bedeutet gewöhnlich, dass eine unpassende Prozessorarchitektur gewählt wurde. `arm64` und `armhf` benötigen unterschiedliche Dateien. Nach einem solchen Fehler das passende Archiv entpacken und den Installer erneut ausführen; eine vorhandene Serverkonfiguration wird weiterverwendet.
 
 Das Installationsskript richtet den systemd-Dienst ein und gibt bei der ersten Installation **Zugangstoken und Zertifikatsfingerabdruck** aus. Diese Werte in den Client übernehmen. Der Server speichert ausschließlich einen Hash des Tokens; das ursprüngliche Token lässt sich später nicht auslesen.
 
@@ -56,7 +67,9 @@ Tokens werden unter Windows im Credential Manager und unter Linux über Secret S
 
 ### 3. Updates oder Neustart auslösen
 
-Pakete markieren, „Updatevorschau“ anklicken und die vollständige Änderungsliste prüfen. Erst „Jetzt installieren“ startet die Installation. Neu benötigte Pakete werden angezeigt und mit installiert; Paketentfernungen, Downgrades und Änderungen zurückgehaltener Pakete werden abgelehnt. Eine Vorschau gilt zehn Minuten und wird vor der Installation erneut geprüft. Bei Änderungen ist eine neue Bestätigung erforderlich.
+Pakete markieren, „Updatevorschau“ anklicken und die vollständige Änderungsliste prüfen. Erst „Jetzt installieren“ startet die Installation. Neu benötigte Pakete werden angezeigt und mit installiert. Erforderliche Entfernungen stehen separat unter „WIRD ENTFERNT“ mit Paketname und installierter Version. Enthält die Vorschau Entfernungen, wird der Installationsknopf erst durch die zusätzliche Checkbox freigeschaltet. Auch der Server verlangt diese Zustimmung. Dafür Client und Server ab Version 0.2.0 verwenden.
+
+Essenzielle, geschützte und zurückgehaltene Pakete werden nicht entfernt. Downgrades und vollständiges Löschen von Paketkonfigurationen (Purge) sind gesperrt. Ohne angezeigte und bestätigte Entfernungen bleibt auch die tatsächliche APT-Installation gegen Entfernungen gesperrt. Eine Vorschau gilt zehn Minuten; der Paketstand und der vollständige Ausführungsplan werden vor der Installation erneut geprüft. Bei Änderungen ist eine neue Bestätigung erforderlich.
 
 Lokal geänderte Paketkonfigurationen werden behalten. Paket-Skripte und `needrestart` dürfen im Rahmen der Installation betroffene Dienste neu starten. Ein Serverneustart erfolgt ausschließlich über den gesonderten, bestätigungspflichtigen Neustartknopf. Ein fehlender `/run/reboot-required`-Hinweis garantiert auf Debian nicht, dass kein Neustart erforderlich ist.
 
@@ -102,7 +115,7 @@ sudo systemctl restart serverupdater
 
 Das neue Token in allen Clientprofilen eintragen. Es gilt nach dem Dienstneustart. Für ein neues Zertifikat den Dienst stoppen, die bisherige Konfiguration/TLS-Identität sicher archivieren und `init` erneut ausführen; danach Token und Fingerabdruck in allen Clients neu hinterlegen. Bestehende Daten können weiterverwendet werden.
 
-APT-Paketquellen, Pinning und Holds werden respektiert. Fehlgeschlagene Paketprüfungen lassen die letzte erfolgreiche Liste stehen und kennzeichnen sie als veraltet. Parallele eigene Operationen sind gesperrt; bei externen APT-Sperren wird bis zu 60 Sekunden gewartet. Die Paketquellen müssen zur gewünschten Debian-Version passen: Das Programm verwaltet keine Distributionswechsel, Paketquellen oder Rollbacks. Andere Paketmanager und automatische Paketbereinigung gehören nicht zum Funktionsumfang.
+APT-Paketquellen, Pinning und Holds werden respektiert. Fehlgeschlagene Paketprüfungen lassen die letzte erfolgreiche Liste stehen und kennzeichnen sie als veraltet. Parallele eigene Operationen sind gesperrt; bei externen APT-Sperren wird normalerweise bis zu 60 Sekunden gewartet. Installationen mit bestätigten Entfernungen warten nicht durch eine fremde Paketinstallation: Nach deren Abschluss eine neue Vorschau erstellen. Die Paketquellen müssen zur gewünschten Debian-Version passen: Das Programm verwaltet keine Distributionswechsel, Paketquellen oder Rollbacks. Andere Paketmanager und automatische Paketbereinigung gehören nicht zum Funktionsumfang.
 
 ## Selbst bauen
 
@@ -113,6 +126,8 @@ Nur den Server bauen, ohne GUI-Abhängigkeiten:
 ```sh
 make server-all
 ```
+
+Das baut Serverdateien für amd64, arm64 und armhf. `make server` verwendet die Architektur der lokalen Go-Installation. Nur 32-Bit-ARM: `make server-armhf` (`GOARCH=arm`, `GOARM=7`).
 
 Alternativ ohne Make:
 
@@ -150,7 +165,7 @@ make client-windows
 
 Der Client enthält ein eigenes Server-Symbol für das Programmfenster und die Windows-EXE. Die SVG-Vorlage liegt unter `internal/branding/server.svg`; PNG, ICO und die Windows-Ressource sind bereits enthalten. Nach Änderungen an der Vorlage erzeugt `make icons windows-resource` diese Dateien neu (für die Windows-Ressource wird MinGW-w64 `windres` benötigt). Die ICO-Datei enthält Größen von 16 bis 256 Pixeln.
 
-Alle vier Builds und Archive: `make release` (Linux-Grafikheader, MinGW, GNU Make, tar und zip erforderlich). Bereits gebaute Dateien mit `make package` verpacken. Details zu den GUI-Buildvoraussetzungen: [Fyne Quick Start](https://docs.fyne.io/started/quick/).
+Alle fünf Builds und Archive: `make release` (Linux-Grafikheader, MinGW, GNU Make, tar und zip erforderlich). Bereits gebaute Dateien mit `make package` verpacken. Details zu den GUI-Buildvoraussetzungen: [Fyne Quick Start](https://docs.fyne.io/started/quick/).
 
 ## Tests
 
@@ -177,7 +192,9 @@ Alle Endpunkte unter `/api/v1` benötigen `Authorization: Bearer TOKEN`. Veränd
 | GET | `/jobs/{id}` | Auftrag mit Protokoll, Ergebnis und gegebenenfalls Vorschau |
 | POST | `/check` | `{}`; Paketprüfung starten |
 | POST | `/plans` | `{"packages":["openssl:amd64"]}`; Vorschauauftrag starten |
-| POST | `/install` | `{"plan_id":"…"}`; bestätigte Vorschau installieren |
+| POST | `/install` | `{"plan_id":"…","confirm_removals":true}`; `confirm_removals` ist bei geplanten Entfernungen ausdrücklich erforderlich, sonst optional/false |
 | POST | `/reboot` | `{"confirm_hostname":"debian-server"}`; Neustart ohne Updatevoraussetzung |
 
 Auftragszustände: `running`, `succeeded`, `failed`, `interrupted`. Der Neustartauftrag meldet die erfolgreiche Beauftragung von systemd; erst eine neue Boot-ID bestätigt den tatsächlichen Systemstart. Der Server blockiert nach der Neustartbeauftragung weitere Paketoperationen bis zum nächsten Dienststart. Anfragen mit Browser-Origin und HTTP-Weiterleitungen werden nicht unterstützt.
+
+Vorschauaktionen enthalten bei Entfernungen `remove: true`, die installierte Version in `from` und ein leeres `to`. Ältere Clients können damit keine Entfernungen auslösen, da ihnen die zusätzliche Zustimmung im Installationsaufruf fehlt.

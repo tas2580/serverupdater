@@ -44,6 +44,7 @@ type Action struct {
 	Package string `json:"package"`
 	From    string `json:"from,omitempty"`
 	To      string `json:"to"`
+	Remove  bool   `json:"remove,omitempty"`
 }
 
 type Plan struct {
@@ -53,6 +54,15 @@ type Plan struct {
 	Selected  []string  `json:"selected"`
 	Actions   []Action  `json:"actions"`
 	StateHash string    `json:"state_hash"`
+}
+
+func (p Plan) HasRemovals() bool {
+	for _, action := range p.Actions {
+		if action.Remove {
+			return true
+		}
+	}
+	return false
 }
 
 // Jobs survive client disconnects. Queued/running jobs are interrupted on daemon restart.
@@ -90,7 +100,8 @@ type PlanRequest struct {
 	Packages []string `json:"packages"`
 }
 type InstallRequest struct {
-	PlanID string `json:"plan_id"`
+	PlanID          string `json:"plan_id"`
+	ConfirmRemovals bool   `json:"confirm_removals,omitempty"`
 }
 type RebootRequest struct {
 	ConfirmHostname string `json:"confirm_hostname"`

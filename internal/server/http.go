@@ -53,7 +53,7 @@ func Handler(s *Service, tokenHash string) http.Handler {
 		if !decode(w, r, &req) {
 			return
 		}
-		j, err := s.Install(r.Header.Get("Idempotency-Key"), req.PlanID)
+		j, err := s.Install(r.Header.Get("Idempotency-Key"), req.PlanID, req.ConfirmRemovals)
 		jobResponse(w, j, err)
 	})
 	mux.HandleFunc("POST /api/v1/reboot", func(w http.ResponseWriter, r *http.Request) {

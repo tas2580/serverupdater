@@ -22,6 +22,8 @@ type installed struct {
 	ID, Version string
 	Held        bool
 	Candidate   string
+	Essential   bool
+	Protected   bool
 }
 type inventory struct {
 	Native   string
@@ -45,6 +47,11 @@ func (i inventory) resolve(id string) string {
 var packageID = regexp.MustCompile(`^[a-z0-9][a-z0-9+.-]+:[a-z0-9][a-z0-9-]*$`)
 var instLine = regexp.MustCompile(`^Inst ([^ ]+)(?: \[([^\]]+)\])? \(([^ )]+)(?: .*)?\)$`)
 var archSuffix = regexp.MustCompile(`\[([a-z0-9][a-z0-9-]*)\]\)$`)
+var removalLine = regexp.MustCompile(`^Remv ([^ ]+)(?: \[([^\]]+)\])?(?:[ \t]*\[[^\]\r\n]*\])?$`)
+
+// APT appends per-operation dependency states, e.g. ")[]" or ") [foo:armhf ]".
+// The command's exit status determines whether the complete simulation succeeded.
+var aptStateSuffix = regexp.MustCompile(`\)[ \t]*\[[^\]\r\n]*\]$`)
 
 func (m *Manager) inventory(ctx context.Context) (inventory, error) {
 	i := inventory{Packages: make(map[string]installed)}
@@ -53,7 +60,7 @@ func (m *Manager) inventory(ctx context.Context) (inventory, error) {
 		return i, err
 	}
 	i.Native = strings.TrimSpace(string(out))
-	out, err = m.Runner.Run(ctx, []string{"/usr/bin/dpkg-query", "-W", "-f=${Package}\t${Architecture}\t${Version}\t${db:Status-Status}\n"}, nil)
+	out, err = m.Runner.Run(ctx, []string{"/usr/bin/dpkg-query", "-W", "-f=${Package}\t${Architecture}\t${Version}\t${db:Status-Status}\t${Essential}\t${Protected}\n"}, nil)
 	if err != nil {
 		return i, err
 	}
@@ -62,7 +69,7 @@ func (m *Manager) inventory(ctx context.Context) (inventory, error) {
 			continue
 		}
 		parts := strings.Split(line, "\t")
-		if len(parts) != 4 {
+		if len(parts) != 6 {
 			return i, fmt.Errorf("unbekannte dpkg-Ausgabe: %q", line)
 		}
 		if parts[3] != "installed" {
@@ -72,7 +79,7 @@ func (m *Manager) inventory(ctx context.Context) (inventory, error) {
 		if !packageID.MatchString(id) || parts[2] == "" {
 			return i, fmt.Errorf("ungültiges installiertes Paket: %q", id)
 		}
-		i.Packages[id] = installed{ID: id, Version: parts[2]}
+		i.Packages[id] = installed{ID: id, Version: parts[2], Essential: parts[4] == "yes", Protected: parts[5] == "yes"}
 	}
 	if len(i.Packages) == 0 {
 		return i, errors.New("keine installierten Pakete gefunden")
@@ -211,7 +218,9 @@ func (m *Manager) Plan(ctx context.Context, selected []string, emit func(string)
 }
 
 func (m *Manager) simulate(ctx context.Context, i inventory, packages []string, emit func(string)) ([]model.Action, error) {
-	args := append([]string{"/usr/bin/apt-get", "--simulate", "--no-remove", "--no-install-recommends", "-o", "Dpkg::Use-Pty=0", "install"}, packages...)
+	args := append([]string{"/usr/bin/apt-get", "--simulate"}, aptPolicy()...)
+	args = append(args, "install")
+	args = append(args, packages...)
 	out, err := m.Runner.Run(ctx, args, emit)
 	if err != nil {
 		return nil, err
@@ -219,16 +228,45 @@ func (m *Manager) simulate(ctx context.Context, i inventory, packages []string, 
 	return m.parseActions(ctx, i, string(out))
 }
 
+func aptPolicy() []string {
+	return []string{"--no-install-recommends", "--no-allow-downgrades", "--no-allow-remove-essential", "--no-allow-change-held-packages", "--no-allow-unauthenticated", "-o", "APT::Get::Purge=false", "-o", "APT::Get::AutomaticRemove=false", "-o", "Dpkg::Use-Pty=0"}
+}
+
 func (m *Manager) parseActions(ctx context.Context, i inventory, out string) ([]model.Action, error) {
 	actions := make([]model.Action, 0)
 	seen := map[string]bool{}
 	for _, line := range strings.Split(out, "\n") {
-		if strings.HasPrefix(line, "Remv ") || strings.HasPrefix(line, "Purg ") {
-			return nil, errors.New("Update würde Pakete entfernen")
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "Purg ") {
+			return nil, errors.New("vollständiges Löschen von Paketen und Konfigurationen (Purge) wird nicht unterstützt")
+		}
+		if strings.HasPrefix(line, "Remv ") {
+			match := removalLine.FindStringSubmatch(line)
+			if match == nil {
+				return nil, fmt.Errorf("unbekannte APT-Entfernungszeile: %q", line)
+			}
+			id := i.resolve(match[1])
+			p, ok := i.Packages[id]
+			if !ok || !packageID.MatchString(id) || seen[id] {
+				return nil, fmt.Errorf("ungültige Paketentfernung: %s", id)
+			}
+			if p.Held {
+				return nil, fmt.Errorf("zurückgehaltenes Paket darf nicht entfernt werden: %s", id)
+			}
+			if p.Essential || p.Protected {
+				return nil, fmt.Errorf("essenzielles oder geschütztes Paket darf nicht entfernt werden: %s", id)
+			}
+			if match[2] != "" && match[2] != p.Version {
+				return nil, fmt.Errorf("Paketstand für %s hat sich geändert; bitte erneut prüfen", id)
+			}
+			seen[id] = true
+			actions = append(actions, model.Action{Package: id, From: p.Version, Remove: true})
+			continue
 		}
 		if !strings.HasPrefix(line, "Inst ") {
 			continue
 		}
+		line = aptStateSuffix.ReplaceAllString(line, ")")
 		match := instLine.FindStringSubmatch(line)
 		if match == nil {
 			return nil, fmt.Errorf("unbekannte APT-Installationszeile: %q", line)
@@ -264,7 +302,10 @@ func (m *Manager) parseActions(ctx context.Context, i inventory, out string) ([]
 	return actions, nil
 }
 
-func (m *Manager) Install(ctx context.Context, plan model.Plan, emit func(string)) error {
+func (m *Manager) Install(ctx context.Context, plan model.Plan, confirmRemovals bool, emit func(string)) error {
+	if plan.HasRemovals() && !confirmRemovals {
+		return errors.New("Paketentfernungen müssen in der Vorschau ausdrücklich bestätigt werden")
+	}
 	if time.Now().After(plan.ExpiresAt) {
 		return errors.New("Vorschau abgelaufen; bitte erneut erstellen und bestätigen")
 	}
@@ -306,12 +347,35 @@ func (m *Manager) Install(ctx context.Context, plan model.Plan, emit func(string
 		selected[id] = true
 	}
 	for _, a := range actions {
+		if a.Remove {
+			pinned = append(pinned, a.Package+"-")
+			continue
+		}
 		pinned = append(pinned, a.Package+"="+a.To)
 		if autoIDs[a.Package] || (a.From == "" && !selected[a.Package]) {
 			restoreAuto = append(restoreAuto, a.Package)
 		}
 	}
-	cmd := append([]string{"/usr/bin/apt-get", "--assume-yes", "--no-remove", "--no-install-recommends", "-o", "DPkg::Lock::Timeout=60", "-o", "Dpkg::Use-Pty=0", "-o", "Dpkg::Options::=--force-confold", "install"}, pinned...)
+	// The exact execution arguments must resolve to the complete confirmed plan.
+	executionActions, err := m.simulate(ctx, i, pinned, emit)
+	if err != nil {
+		return err
+	}
+	if !reflect.DeepEqual(executionActions, plan.Actions) {
+		return errors.New("Installationsplan hat sich geändert; neue Vorschau und Bestätigung erforderlich")
+	}
+	lockTimeout := "60"
+	// Do not wait through an external package transaction after confirming removals;
+	// require a fresh preview once that transaction has finished instead.
+	if plan.HasRemovals() {
+		lockTimeout = "0"
+	}
+	cmd := append([]string{"/usr/bin/apt-get", "--assume-yes", "-o", "DPkg::Lock::Timeout=" + lockTimeout, "-o", "Dpkg::Options::=--force-confold"}, aptPolicy()...)
+	if !plan.HasRemovals() {
+		cmd = append(cmd, "--no-remove")
+	}
+	cmd = append(cmd, "install")
+	cmd = append(cmd, pinned...)
 	_, installErr := m.Runner.Run(ctx, cmd, emit)
 	// Explicit version arguments can change APT's automatic-install marks; preserve them.
 	if len(restoreAuto) > 0 {

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -21,7 +22,7 @@ import (
 type Backend interface {
 	Refresh(context.Context, func(string)) ([]model.PackageUpdate, error)
 	Plan(context.Context, []string, func(string)) (model.Plan, error)
-	Install(context.Context, model.Plan, func(string)) error
+	Install(context.Context, model.Plan, bool, func(string)) error
 	Reboot(context.Context, func(string)) error
 }
 
@@ -277,13 +278,16 @@ func (s *Service) CreatePlan(key string, packages []string) (model.Job, error) {
 	})
 }
 
-func (s *Service) Install(key, planID string) (model.Job, error) {
+func (s *Service) Install(key, planID string, confirmRemovals bool) (model.Job, error) {
 	p, ok := s.Plan(planID)
 	if !ok {
 		return model.Job{}, errors.New("Vorschau nicht gefunden; bitte erneut erstellen")
 	}
-	return s.submit("install", key, planID, func(emit func(string)) (*model.Plan, error) {
-		err := s.backend.Install(context.Background(), p, emit)
+	if p.HasRemovals() && !confirmRemovals {
+		return model.Job{}, errors.New("Diese Vorschau enthält Paketentfernungen. Bitte im aktuellen Client ausdrücklich bestätigen.")
+	}
+	return s.submit("install", key, fmt.Sprintf("%s:%t", planID, confirmRemovals), func(emit func(string)) (*model.Plan, error) {
+		err := s.backend.Install(context.Background(), p, confirmRemovals, emit)
 		emit("\nPaketliste nach Installation neu prüfen …\n")
 		refreshErr := s.refresh(emit)
 		if refreshErr != nil {

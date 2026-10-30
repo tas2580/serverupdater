@@ -38,8 +38,8 @@ func (b *fakeBackend) Refresh(ctx context.Context, emit func(string)) ([]model.P
 func (b *fakeBackend) Plan(ctx context.Context, p []string, emit func(string)) (model.Plan, error) {
 	return model.Plan{ID: "plan-one", Selected: p, Actions: []model.Action{{Package: "foo:amd64", From: "1", To: "2"}}, ExpiresAt: time.Now().Add(time.Minute)}, nil
 }
-func (b *fakeBackend) Install(context.Context, model.Plan, func(string)) error { return nil }
-func (b *fakeBackend) Reboot(context.Context, func(string)) error              { b.reboots.Add(1); return nil }
+func (b *fakeBackend) Install(context.Context, model.Plan, bool, func(string)) error { return nil }
+func (b *fakeBackend) Reboot(context.Context, func(string)) error                    { b.reboots.Add(1); return nil }
 func newTestService(t *testing.T, b Backend) *Service {
 	t.Helper()
 	s, err := New(t.TempDir(), "test", b, slog.New(slog.NewTextHandler(io.Discard, nil)))

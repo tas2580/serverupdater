@@ -1,4 +1,4 @@
-Third-party notices for ServerUpdater 0.1.0
+Third-party notices for ServerUpdater
 
 The following license and copyright notices accompany dependencies and embedded assets.
 Some listed modules support other platforms or tests.

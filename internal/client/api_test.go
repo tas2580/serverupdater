@@ -26,9 +26,12 @@ import (
 )
 
 type backend struct {
-	reboots atomic.Int32
-	release chan struct{}
-	entered chan struct{}
+	reboots     atomic.Int32
+	release     chan struct{}
+	entered     chan struct{}
+	removalPlan bool
+	installs    atomic.Int32
+	confirmed   atomic.Bool
 }
 
 func (b *backend) Refresh(ctx context.Context, emit func(string)) ([]model.PackageUpdate, error) {
@@ -45,10 +48,18 @@ func (b *backend) Refresh(ctx context.Context, emit func(string)) ([]model.Packa
 	return []model.PackageUpdate{}, nil
 }
 func (b *backend) Plan(ctx context.Context, selected []string, emit func(string)) (model.Plan, error) {
-	return model.Plan{ID: "test-plan", Selected: selected, ExpiresAt: time.Now().Add(time.Minute), Actions: []model.Action{{Package: "foo:amd64", From: "1", To: "2"}}}, nil
+	actions := []model.Action{{Package: "foo:amd64", From: "1", To: "2"}}
+	if b.removalPlan {
+		actions = append(actions, model.Action{Package: "jellyfin-ffmpeg7:amd64", From: "7", Remove: true})
+	}
+	return model.Plan{ID: "test-plan", Selected: selected, ExpiresAt: time.Now().Add(time.Minute), Actions: actions}, nil
 }
-func (b *backend) Install(context.Context, model.Plan, func(string)) error { return nil }
-func (b *backend) Reboot(context.Context, func(string)) error              { b.reboots.Add(1); return nil }
+func (b *backend) Install(_ context.Context, _ model.Plan, confirmed bool, _ func(string)) error {
+	b.installs.Add(1)
+	b.confirmed.Store(confirmed)
+	return nil
+}
+func (b *backend) Reboot(context.Context, func(string)) error { b.reboots.Add(1); return nil }
 
 func setup(t *testing.T, b *backend) (*server.Service, *httptest.Server, model.Profile, string) {
 	t.Helper()
@@ -148,7 +159,7 @@ func TestAPIUpdateFlowAndReconnect(t *testing.T) {
 	if preview.Plan == nil {
 		t.Fatal("keine Vorschau")
 	}
-	j, err = a.Install(context.Background(), preview.Plan.ID)
+	j, err = a.Install(context.Background(), preview.Plan.ID, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,6 +180,50 @@ func TestAPIUpdateFlowAndReconnect(t *testing.T) {
 		if summary.Log != "" || summary.Plan != nil {
 			t.Fatal("Auftragsliste enthält vollständige Protokolle")
 		}
+	}
+}
+
+func TestRemovalConfirmationIsEnforcedByAPI(t *testing.T) {
+	b := &backend{removalPlan: true}
+	_, h, p, token := setup(t, b)
+	a, err := client.New(p, token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Close()
+	j, err := a.Plan(context.Background(), []string{"foo:amd64"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	preview := waitJob(t, a, j.ID)
+	if preview.Plan == nil || !preview.Plan.HasRemovals() {
+		t.Fatal("Entfernung fehlt in API-Vorschau")
+	}
+	if _, err = a.Install(context.Background(), preview.Plan.ID, false); err == nil {
+		t.Fatal("API akzeptiert Entfernung ohne Zustimmung")
+	}
+	// Older clients omit the new field completely; that must not grant consent.
+	body, _ := json.Marshal(map[string]string{"plan_id": preview.Plan.ID})
+	req, _ := http.NewRequest("POST", h.URL+"/api/v1/install", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Idempotency-Key", "legacy-no-confirm")
+	resp, err := h.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != 400 || b.installs.Load() != 0 {
+		t.Fatal("alter Client umgeht Entfernungsbestätigung")
+	}
+	j, err = a.Install(context.Background(), preview.Plan.ID, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result := waitJob(t, a, j.ID); result.State != "succeeded" {
+		t.Fatalf("bestätigte Installation: %+v", result)
+	}
+	if b.installs.Load() != 1 || !b.confirmed.Load() {
+		t.Fatal("Zustimmung nicht an Paketverwaltung weitergegeben")
 	}
 }
 

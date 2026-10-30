@@ -1,15 +1,21 @@
 GO ?= go
-VERSION ?= 0.1.0
+VERSION ?= 0.2.0
 MINGW_CC ?= x86_64-w64-mingw32-gcc
 MINGW_WINDRES ?= x86_64-w64-mingw32-windres
+SERVER_GOARCH ?= $(shell $(GO) env GOARCH)
+SERVER_ARCH = $(if $(filter arm,$(SERVER_GOARCH)),armhf,$(SERVER_GOARCH))
 BUILD_FLAGS = -buildvcs=false -trimpath
 LD_FLAGS = -s -w -X main.version=$(VERSION)
 
-.PHONY: all server server-arm64 server-all client client-linux client-windows icons windows-resource test vet release package
+.PHONY: all server server-amd64 server-arm64 server-armhf server-all client client-linux client-windows icons windows-resource test vet release package
 
 all: server client
 
 server:
+	mkdir -p bin
+	CGO_ENABLED=0 GOOS=linux GOARCH=$(SERVER_GOARCH) GOARM=7 $(GO) build $(BUILD_FLAGS) -ldflags '$(LD_FLAGS)' -o bin/serverupdaterd-linux-$(SERVER_ARCH) ./cmd/serverupdaterd
+
+server-amd64:
 	mkdir -p bin
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) build $(BUILD_FLAGS) -ldflags '$(LD_FLAGS)' -o bin/serverupdaterd-linux-amd64 ./cmd/serverupdaterd
 
@@ -17,7 +23,11 @@ server-arm64:
 	mkdir -p bin
 	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 $(GO) build $(BUILD_FLAGS) -ldflags '$(LD_FLAGS)' -o bin/serverupdaterd-linux-arm64 ./cmd/serverupdaterd
 
-server-all: server server-arm64
+server-armhf:
+	mkdir -p bin
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 $(GO) build $(BUILD_FLAGS) -ldflags '$(LD_FLAGS)' -o bin/serverupdaterd-linux-armhf ./cmd/serverupdaterd
+
+server-all: server-amd64 server-arm64 server-armhf
 
 client:
 	mkdir -p bin
@@ -51,12 +61,18 @@ release: server-all client-linux client-windows
 package:
 	test -f bin/serverupdaterd-linux-amd64
 	test -f bin/serverupdaterd-linux-arm64
+	test -f bin/serverupdaterd-linux-armhf
 	test -f bin/serverupdater-linux-amd64
 	test -f bin/serverupdater-windows-amd64.exe
 	mkdir -p dist
+	tar -czf dist/serverupdater-server-linux.tar.gz README.md THIRD_PARTY_NOTICES.txt deploy/serverupdater.service scripts/install-server.sh bin/serverupdaterd-linux-amd64 bin/serverupdaterd-linux-arm64 bin/serverupdaterd-linux-armhf
 	tar -czf dist/serverupdater-server-linux-amd64.tar.gz README.md THIRD_PARTY_NOTICES.txt deploy/serverupdater.service scripts/install-server.sh bin/serverupdaterd-linux-amd64
 	tar -czf dist/serverupdater-server-linux-arm64.tar.gz README.md THIRD_PARTY_NOTICES.txt deploy/serverupdater.service scripts/install-server.sh bin/serverupdaterd-linux-arm64
-	cp bin/serverupdater-linux-amd64 bin/serverupdater-windows-amd64.exe dist/
+	tar -czf dist/serverupdater-server-linux-armhf.tar.gz README.md THIRD_PARTY_NOTICES.txt deploy/serverupdater.service scripts/install-server.sh bin/serverupdaterd-linux-armhf
+	cp bin/serverupdater-linux-amd64 dist/.serverupdater-linux-amd64.new
+	mv -f dist/.serverupdater-linux-amd64.new dist/serverupdater-linux-amd64
+	cp bin/serverupdater-windows-amd64.exe dist/.serverupdater-windows-amd64.exe.new
+	mv -f dist/.serverupdater-windows-amd64.exe.new dist/serverupdater-windows-amd64.exe
 	cp THIRD_PARTY_NOTICES.txt dist/
 	tar -czf dist/serverupdater-client-linux-amd64.tar.gz README.md THIRD_PARTY_NOTICES.txt bin/serverupdater-linux-amd64
 	zip -j -q dist/serverupdater-client-windows-amd64.zip bin/serverupdater-windows-amd64.exe README.md THIRD_PARTY_NOTICES.txt
